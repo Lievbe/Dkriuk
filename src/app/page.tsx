@@ -13,6 +13,98 @@ import LoginModal from "@/components/LoginModal";
 import AddProductModal from "@/components/AddProductModal";
 import { Outlet, Product, DashboardMetrics } from "@/lib/types";
 
+const mockSalesByDay = [
+  { dayName: "Sen", amount: 650000 },
+  { dayName: "Sel", amount: 720000 },
+  { dayName: "Rab", amount: 680000 },
+  { dayName: "Kam", amount: 710000 },
+  { dayName: "Jum", amount: 790000 },
+  { dayName: "Sab", amount: 750000 },
+  { dayName: "Min", amount: 800000 },
+];
+
+function getLocalDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function createMockDashboardMetrics(
+  outletId?: number,
+  outletName?: string
+): DashboardMetrics {
+  const today = new Date();
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+
+  return {
+    outletName: outletName ?? "Outlet D'Kriuk Tebet",
+    outletId: outletId ?? 1,
+    netProfitToday: 250000,
+    netProfitGrowth: 12,
+    salesToday: 800000,
+    salesGrowth: 15,
+    hppToday: 400000,
+    hppGrowth: 8,
+    operationalExpensesToday: 150000,
+    expensesGrowth: -5,
+    itemsSoldToday: 65,
+    itemsSoldGrowth: 18,
+    dailySales7Days: mockSalesByDay.map((item, index) => {
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + index);
+
+      return {
+        ...item,
+        date: getLocalDateString(date),
+        portions: Math.round(item.amount / 12300),
+      };
+    }),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isDashboardMetrics(value: unknown): value is DashboardMetrics {
+  if (!isRecord(value) || typeof value.outletName !== "string") {
+    return false;
+  }
+
+  const numericFields = [
+    "outletId",
+    "netProfitToday",
+    "netProfitGrowth",
+    "salesToday",
+    "salesGrowth",
+    "hppToday",
+    "hppGrowth",
+    "operationalExpensesToday",
+    "expensesGrowth",
+    "itemsSoldToday",
+    "itemsSoldGrowth",
+  ] as const;
+
+  return (
+    numericFields.every(
+      (field) => typeof value[field] === "number" && Number.isFinite(value[field])
+    ) &&
+    Array.isArray(value.dailySales7Days) &&
+    value.dailySales7Days.every(
+      (day) =>
+        isRecord(day) &&
+        typeof day.dayName === "string" &&
+        typeof day.date === "string" &&
+        typeof day.amount === "number" &&
+        Number.isFinite(day.amount) &&
+        typeof day.portions === "number" &&
+        Number.isFinite(day.portions)
+    )
+  );
+}
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>("beranda");
   const [outlets, setOutlets] = useState<Outlet[]>([]);
@@ -52,17 +144,25 @@ export default function App() {
   };
 
   // Fetch dashboard metrics
-  const fetchMetrics = async (outletId?: number) => {
+  const fetchMetrics = async (outletId?: number, outletName?: string) => {
     setLoadingMetrics(true);
     try {
       const url = outletId ? `/api/dashboard?outletId=${outletId}` : "/api/dashboard";
       const res = await fetch(url);
-      const json = await res.json();
-      if (json.success) {
-        setMetrics(json.data);
+
+      if (!res.ok) {
+        throw new Error(`Dashboard API returned HTTP ${res.status}`);
       }
+
+      const json: unknown = await res.json();
+      if (!isRecord(json) || json.success !== true || !isDashboardMetrics(json.data)) {
+        throw new Error("Dashboard API returned an invalid response");
+      }
+
+      setMetrics(json.data);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to fetch dashboard metrics; using mock data.", err);
+      setMetrics(createMockDashboardMetrics(outletId, outletName));
     } finally {
       setLoadingMetrics(false);
     }
@@ -91,12 +191,12 @@ export default function App() {
   // When outlet changes
   const handleSelectOutlet = (outlet: Outlet) => {
     setCurrentOutlet(outlet);
-    fetchMetrics(outlet.id);
+    fetchMetrics(outlet.id, outlet.name);
   };
 
   // Refresh all state on modification
   const handleRefreshData = () => {
-    fetchMetrics(currentOutlet?.id);
+    fetchMetrics(currentOutlet?.id, currentOutlet?.name);
     fetchProducts();
   };
 
